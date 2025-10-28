@@ -1,24 +1,30 @@
-//NOTAAA ** LAS IAs NO ESTÁN ENTRENADAS PARA ESTA VERSIÓN DE MAPS,
-//FAVOR DE VERIFICAR LA DOCUMENTACIÓN
-// no olvidar habilitar Maps Service, places Service (new) y geolocation services
-//https://developers.google.com/maps/documentation/javascript/examples/place-text-search#maps_place_text_search-javascript
-
-//https://developers.google.com/maps/documentation/javascript/examples/place-photos
-
-
+//Variables globales para el objeto mapa, el servicio de Places (aunque no se usa el antiguo service),
+//y una matriz para almacenar los marcadores.
 let map;
 let service; 
 let markers = [];
 let infoWindow; 
+let promedioMarker = null; // marcador del promedio
+
+
+
+//Define las coordenadas centrales iniciales (Nuevo Casas Grandes, Chihuahua, México).
 const center = { lat: 30.378746, lng: -107.880062 };
 const restaurantListElement = document.getElementById("restaurants-list");
 let getPhotoUrlFunction;
+//consulta de búsqueda predeterminada.
 let currentSearch ="Tacos, comida, restaurantes"
 
+//Iniciar mapa
 async function initMap() {
   const defaultLocation = center;
+  //importa la clase Place y la función getPhotoUrl de la librería places. 
+  //Esto reemplaza la necesidad de crear un objeto PlacesService como en la versión anterior.
     const { Place, getPhotoUrl } = await google.maps.importLibrary("places");
+    const { AdvancedMarkerElement } = await google.maps.importLibrary("marker"); // <-- ¡Añadido!
+
     getPhotoUrlFunction = getPhotoUrl; 
+    //crear mapa
     map = new google.maps.Map(document.getElementById("map"), {
         center: defaultLocation,
         zoom: 14,
@@ -26,35 +32,41 @@ async function initMap() {
     });
     
     infoWindow = new google.maps.InfoWindow();
-    findPlaces(currentSearch);
+    //Inicia la primera búsqueda automáticamente. Y guarda el promedio
+     await findPlaces(currentSearch);
+
+
+    
 }
 
+
+
+
+
+
+//Limpia el mapa de busquedas anteriores
 function clearMarkers() {
   markers.forEach((marker) => marker.setMap(null));
   markers = [];
-
   if (infoWindow) infoWindow.close();
   if (restaurantListElement) {
       restaurantListElement.innerHTML = "";
   }
 }
+
+//Agregar marcador
 async function addMarkerAndDisplay(place, bounds) {
     const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
-  
     const marker = new AdvancedMarkerElement({
       map,
       position: place.location,
       title: place.displayName,
     });
-
     bounds.extend(place.location);
     markers.push(marker);
     displayRestaurant(place);
-    
-
     marker.addListener("click", () => {
         infoWindow.close(); 
-
         const content = `
             <div class="info-window-content">
                 <h6 class="fw-bold">${place.displayName}</h6>
@@ -62,24 +74,20 @@ async function addMarkerAndDisplay(place, bounds) {
                 <div class="rating text-warning">⭐ ${place.rating || 'N/A'}</div>
             </div>
         `;
-
-   
         infoWindow.setContent(content);
         infoWindow.open({
             anchor: marker,
             map: map,
             shouldFocus: false, 
         });
-        
-        
         map.panTo(place.location);
     });
 }
 
 
+//Encontrar lugares
 async function findPlaces(searchText) {
   clearMarkers(); 
-
   const { Place } = await google.maps.importLibrary("places");
   
   const request = {
@@ -87,14 +95,13 @@ async function findPlaces(searchText) {
     //NOTA ENTRE MÁS DATOS SE PIDA DEL LOCAL, MÁS CARO SALE LA PETICIÓN
     //OBTENER Más datos: https://developers.google.com/maps/documentation/places/web-service/data-fields?hl=en
     fields: [
-        "displayName", "location", "businessStatus", "rating", "photos", "formattedAddress",
+        "displayName", "location", "businessStatus", "rating", "photos", "formattedAddress","userRatingCount"
     ],
     //includedType: "restaurant",
     locationBias: center,
     isOpenNow: true,
     language: "es-MX",
     maxResultCount: 20,
-    //minRating: 3.2,
     region: "mx",
     useStrictTypeFiltering: false,
   };
@@ -107,12 +114,64 @@ async function findPlaces(searchText) {
   if (places.length) {
     console.log("Resultados de Places (New):", places);
 
-    for (const place of places) {
+//PROMEDIO (SUMA TODO)
+    let sumLat = 0;
+    let sumLng = 0;
+
+        for (const place of places) { 
+            await addMarkerAndDisplay(place, bounds);
+const lat = place.location?.lat();
+      const lng = place.location?.lng();
+
+      if (typeof lat === "number" && typeof lng === "number") {
+        sumLat += lat;
+        sumLng += lng;
         await addMarkerAndDisplay(place, bounds);
+      } else {
+        console.warn("Coordenadas inválidas para:", place.displayName, place.location);
+      }
+        }
+        
+//END SUMA PROMEDIO
+
+        map.fitBounds(bounds);
+         // Calcula promedio solo si hay lugares válidos
+    const avgLat = sumLat / places.length;
+    const avgLng = sumLng / places.length;
+
+    if (!isNaN(avgLat) && !isNaN(avgLng)) {
+      const promedioLocation = new google.maps.LatLng(avgLat, avgLng);
+
+      // Crear marcador personalizado
+      const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+      const img = document.createElement("img");
+      img.src = "./icons/icon.png";
+      img.style.width = "45px";
+      img.style.height = "45px";
+
+      // Elimina marcador anterior si existe
+      if (promedioMarker) {
+        promedioMarker.map = null;
+      }
+
+      promedioMarker = new AdvancedMarkerElement({
+        map,
+        position: promedioLocation,
+        content: img,
+        title: "Promedio de lugares",
+      });
+
+      promedioMarker.addListener("click", () => {
+        infoWindow.close();
+        infoWindow.setContent(`<div class="fw-bold">📍 Promedio de los lugares encontrados</div>
+          <div>Latitud: ${avgLat.toFixed(6)}</div>
+          <div>Longitud: ${avgLng.toFixed(6)}</div>
+        `);
+        infoWindow.open({ anchor: promedioMarker, map });
+      });
+    } else {
+      console.warn("No se pudo calcular el promedio, coordenadas inválidas.");
     }
-    
-    map.fitBounds(bounds);
-    
   } else {
     console.log("No se encontraron resultados para la búsqueda.");
     if (restaurantListElement) {
@@ -120,7 +179,11 @@ async function findPlaces(searchText) {
     }
   }
 }
+
+//Mostrar datos de los restaurantes
 async function displayRestaurant(place) {
+    const ratingCount = place.userRatingCount ? `(${place.userRatingCount} Comentarios)` : '(Sin comentarios)';
+
     if (!restaurantListElement) return;
 
     let photoUrl = "";
@@ -147,12 +210,13 @@ async function displayRestaurant(place) {
             <p class="mb-2 text-muted">
                 ${statusText} 
             </p>
-            <div class="rating text-warning">⭐ ${place.rating || 'N/A'}</div>
+            <div class="rating text-warning">⭐ ${place.rating || 'N/A'} ${ratingCount}</div>
         </div>
     `;
 
     restaurantListElement.innerHTML += card;
 }
+
 
 async function searchCityAndPlaces(cityName) {
    
@@ -180,6 +244,8 @@ async function searchCityAndPlaces(cityName) {
         }
     });
 }
+
+
 document.addEventListener("DOMContentLoaded", () => {
     const searchButton = document.getElementById("search-btn");
     const locationInput = document.getElementById("location-input");
