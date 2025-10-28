@@ -89,96 +89,102 @@ async function addMarkerAndDisplay(place, bounds) {
 async function findPlaces(searchText) {
   clearMarkers(); 
   const { Place } = await google.maps.importLibrary("places");
-  
+  const { LatLngBounds } = await google.maps.importLibrary("core");
+
+  const bounds = new LatLngBounds();
+
+  //Petición de búsqueda (usando la categoría que el usuario elija)
   const request = {
-    textQuery: searchText,
-    //NOTA ENTRE MÁS DATOS SE PIDA DEL LOCAL, MÁS CARO SALE LA PETICIÓN
-    //OBTENER Más datos: https://developers.google.com/maps/documentation/places/web-service/data-fields?hl=en
+    textQuery: searchText, // Aquí va el texto de búsqueda dinámico
     fields: [
-        "displayName", "location", "businessStatus", "rating", "photos", "formattedAddress","userRatingCount"
+      "displayName",
+      "location",
+      "businessStatus",
+      "rating",
+      "photos",
+      "formattedAddress",
+      "userRatingCount"
     ],
-    //includedType: "restaurant",
-    locationBias: center,
+    locationBias: center, // punto base
     isOpenNow: true,
     language: "es-MX",
     maxResultCount: 20,
-    region: "mx",
-    useStrictTypeFiltering: false,
+    region: "mx"
   };
 
   const { places } = await Place.searchByText(request);
-  const { LatLngBounds } = await google.maps.importLibrary("core");
-  const bounds = new LatLngBounds();
+  console.log(`Resultados para "${searchText}":`, places);
 
+  if (!places || places.length === 0) {
+    console.log("No se encontraron resultados.");
+    if (restaurantListElement) {
+      restaurantListElement.innerHTML = `<p class='text-center mt-4'>No se encontraron resultados para "${searchText}".</p>`;
+    }
+    return;
+  }
 
-  if (places.length) {
-    console.log("Resultados de Places (New):", places);
+  //Variables para calcular el promedio
+  let validCount = 0;
+  let sumLat = 0;
+  let sumLng = 0;
 
-//PROMEDIO (SUMA TODO)
-    let sumLat = 0;
-    let sumLng = 0;
+  //Agregar marcadores
+  for (const place of places) {
+    const lat = place.location?.lat();
+    const lng = place.location?.lng();
 
-        for (const place of places) { 
-            await addMarkerAndDisplay(place, bounds);
-const lat = place.location?.lat();
-      const lng = place.location?.lng();
+    if (typeof lat === "number" && typeof lng === "number") {
+      sumLat += lat;
+      sumLng += lng;
+      validCount++;
+      await addMarkerAndDisplay(place, bounds);
+    } else {
+      console.warn("Lugar con coordenadas inválidas:", place.displayName);
+    }
+  }
 
-      if (typeof lat === "number" && typeof lng === "number") {
-        sumLat += lat;
-        sumLng += lng;
-        await addMarkerAndDisplay(place, bounds);
-      } else {
-        console.warn("Coordenadas inválidas para:", place.displayName, place.location);
-      }
-        }
-        
-//END SUMA PROMEDIO
+  // Ajustar mapa al área visible de todos los lugares
+  if (validCount > 0) {
+    map.fitBounds(bounds);
 
-        map.fitBounds(bounds);
-         // Calcula promedio solo si hay lugares válidos
-    const avgLat = sumLat / places.length;
-    const avgLng = sumLng / places.length;
+    // Calcular el promedio
+    const avgLat = sumLat / validCount;
+    const avgLng = sumLng / validCount;
 
     if (!isNaN(avgLat) && !isNaN(avgLng)) {
       const promedioLocation = new google.maps.LatLng(avgLat, avgLng);
-
-      // Crear marcador personalizado
       const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+
+      // Eliminar marcador anterior si existe
+      if (promedioMarker) {
+        promedioMarker.map = null;
+      }
+
       const img = document.createElement("img");
       img.src = "./icons/icon.png";
       img.style.width = "45px";
       img.style.height = "45px";
 
-      // Elimina marcador anterior si existe
-      if (promedioMarker) {
-        promedioMarker.map = null;
-      }
-
       promedioMarker = new AdvancedMarkerElement({
         map,
         position: promedioLocation,
         content: img,
-        title: "Promedio de lugares",
+        title: "Promedio de los lugares encontrados",
       });
 
       promedioMarker.addListener("click", () => {
         infoWindow.close();
-        infoWindow.setContent(`<div class="fw-bold">📍 Promedio de los lugares encontrados</div>
+        infoWindow.setContent(`
+          <div class="fw-bold">Promedio de los lugares encontrados</div>
           <div>Latitud: ${avgLat.toFixed(6)}</div>
           <div>Longitud: ${avgLng.toFixed(6)}</div>
         `);
         infoWindow.open({ anchor: promedioMarker, map });
       });
-    } else {
-      console.warn("No se pudo calcular el promedio, coordenadas inválidas.");
-    }
-  } else {
-    console.log("No se encontraron resultados para la búsqueda.");
-    if (restaurantListElement) {
-        restaurantListElement.innerHTML = `<p class='text-center mt-4'>No se encontraron resultados para "${searchText}".</p>`;
     }
   }
 }
+
 
 //Mostrar datos de los restaurantes
 async function displayRestaurant(place) {
@@ -216,6 +222,20 @@ async function displayRestaurant(place) {
 
     restaurantListElement.innerHTML += card;
 }
+
+document.querySelectorAll(".nav-link").forEach(link => {
+  link.addEventListener("click", async (e) => {
+    e.preventDefault();
+
+    const newSearch = e.target.getAttribute("data-search");
+    console.log("Nuevo término de búsqueda:", newSearch);
+
+    document.querySelectorAll(".nav-link").forEach(l => l.classList.remove("active"));
+    e.target.classList.add("active");
+
+    await findPlaces(newSearch);
+  });
+});
 
 
 async function searchCityAndPlaces(cityName) {
