@@ -5,6 +5,11 @@ let service;
 let markers = [];
 let infoWindow; 
 let promedioMarker = null; // marcador del promedio
+let places = [] //Variable global de los lugaes
+let promedioLocation = null; //Ubicacion del promedio de lugares
+let promedioCircle=null; //Circulo del area
+let maxMinLine = null; //Linea
+
 
 
 
@@ -18,8 +23,6 @@ let currentSearch ="Tacos, comida, restaurantes"
 //Iniciar mapa
 async function initMap() {
   const defaultLocation = center;
-  //importa la clase Place y la función getPhotoUrl de la librería places. 
-  //Esto reemplaza la necesidad de crear un objeto PlacesService como en la versión anterior.
     const { Place, getPhotoUrl } = await google.maps.importLibrary("places");
     const { AdvancedMarkerElement } = await google.maps.importLibrary("marker"); // <-- ¡Añadido!
 
@@ -34,15 +37,8 @@ async function initMap() {
     infoWindow = new google.maps.InfoWindow();
     //Inicia la primera búsqueda automáticamente. Y guarda el promedio
      await findPlaces(currentSearch);
-
-
     
 }
-
-
-
-
-
 
 //Limpia el mapa de busquedas anteriores
 function clearMarkers() {
@@ -84,7 +80,6 @@ async function addMarkerAndDisplay(place, bounds) {
     });
 }
 
-
 //Encontrar lugares
 async function findPlaces(searchText) {
   clearMarkers(); 
@@ -95,7 +90,7 @@ async function findPlaces(searchText) {
 
   //Petición de búsqueda (usando la categoría que el usuario elija)
   const request = {
-    textQuery: searchText, // Aquí va el texto de búsqueda dinámico
+    textQuery: searchText, 
     fields: [
       "displayName",
       "location",
@@ -112,7 +107,8 @@ async function findPlaces(searchText) {
     region: "mx"
   };
 
-  const { places } = await Place.searchByText(request);
+const { places: foundPlaces } = await Place.searchByText(request);
+places = foundPlaces || []; //Guarda los resultados globalmente
   console.log(`Resultados para "${searchText}":`, places);
 
   if (!places || places.length === 0) {
@@ -152,7 +148,7 @@ async function findPlaces(searchText) {
     const avgLng = sumLng / validCount;
 
     if (!isNaN(avgLat) && !isNaN(avgLng)) {
-      const promedioLocation = new google.maps.LatLng(avgLat, avgLng);
+       promedioLocation = new google.maps.LatLng(avgLat, avgLng);
       const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
 
       // Eliminar marcador anterior si existe
@@ -181,6 +177,89 @@ async function findPlaces(searchText) {
         `);
         infoWindow.open({ anchor: promedioMarker, map });
       });
+
+
+      //FILTRO AUTOMÁTICO DEL 5% Y CÍRCULO
+const { Polyline } = await google.maps.importLibrary("maps");
+
+// Calcular distancia máxima de los lugares al promedio
+let maxDist = 0;
+const distances = places.map(p => {
+  const loc = p.location;
+  const d = google.maps.geometry.spherical.computeDistanceBetween(promedioLocation, loc);
+  if (d > maxDist) maxDist = d;
+  return d;
+});
+
+// Calcular el 5% de esa distancia
+const minDistance = maxDist * 0.05;
+
+// Filtrar los lugares que estén al menos a ese 5%
+const filtrados = places.filter((p, i) => distances[i] >= minDistance);
+
+console.log(`Lugares filtrados (≥5% del radio):`, filtrados);
+
+// Limpiar la lista antes de volver a mostrar
+if (restaurantListElement) restaurantListElement.innerHTML = "";
+
+// Mostrar solo los filtrados
+filtrados.forEach(place => displayRestaurant(place));
+
+
+if (promedioCircle) {
+    promedioCircle.setMap(null); // elimina el círculo anterior
+}
+
+promedioCircle = new google.maps.Circle({
+  strokeColor: "#4a7df0",    
+  strokeOpacity: 0.8,
+  strokeWeight: 2,
+  fillColor: "#a5bef7",     
+  fillOpacity: 0.2,
+  map: map,
+  center: promedioLocation,
+  radius: maxDist               // radio en metros
+});
+
+if (places.length > 0 && promedioLocation) {
+    const { Polyline } = await google.maps.importLibrary("maps");
+
+    // Calcular distancias al promedio
+    let minDist = Infinity;
+    let maxDist = 0;
+    let closestPlace = null;
+    let farthestPlace = null;
+
+    for (const place of places) {
+        const loc = place.location;
+        const d = google.maps.geometry.spherical.computeDistanceBetween(promedioLocation, loc);
+        if (d < minDist) {
+            minDist = d;
+            closestPlace = loc;
+        }
+        if (d > maxDist) {
+            maxDist = d;
+            farthestPlace = loc;
+        }
+    }
+
+    // Eliminar línea anterior si existe
+    if (maxMinLine) {
+        maxMinLine.setMap(null);
+    }
+
+    // Crear nueva línea
+    maxMinLine = new google.maps.Polyline({
+        path: [closestPlace, farthestPlace],
+        geodesic: true,
+        strokeColor: "#00008b",
+        strokeOpacity: 0.8,
+        strokeWeight: 3,
+        map: map
+    });
+}
+
+
     }
   }
 }
@@ -195,9 +274,7 @@ async function displayRestaurant(place) {
     let photoUrl = "";
     
     if (place.photos && place.photos.length > 0) {
-        //console.log("URL",place.photos[0])
         photoUrl = place.photos[0].getURI({ 
-            //photo: place.photos[0], 
             maxWidth: 500, 
             maxHeight: 200 
         });
@@ -239,25 +316,15 @@ document.querySelectorAll(".nav-link").forEach(link => {
 
 
 async function searchCityAndPlaces(cityName) {
-   
     const { Geocoder } = await google.maps.importLibrary("geocoding");
     const geocoder = new Geocoder();
-
-  
     geocoder.geocode({ address: cityName }, (results, status) => {
         if (status === "OK" && results[0]) {
-           
-            const newLocation = results[0].geometry.location;
-            
-          
+            const newLocation = results[0].geometry.location; 
             center.lat = newLocation.lat();
             center.lng = newLocation.lng();
-
-           
             map.setCenter(newLocation);
-        
             findPlaces(currentSearch); 
-
         } else {
             console.error("Geocoding falló con el estado:", status);
             alert(`No se pudo encontrar la ubicación para "${cityName}": ${status}`);
@@ -284,4 +351,53 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     }
+
+    document.getElementById("btnValorados")?.addEventListener("click", () => {
+  if (!places || places.length === 0) {
+    console.warn("No hay lugares cargados aún.");
+    return;
+  }
+
+  // Limpia lista anterior
+  if (restaurantListElement) restaurantListElement.innerHTML = "";
+
+  // Ordena de mayor a menor según número de valoraciones
+  const ordenados = [...places].sort((a, b) => {
+    const countA = a.userRatingCount || 0;
+    const countB = b.userRatingCount || 0;
+    return countB - countA;
+  });
+
+  console.log("Lugares ordenados por valoraciones:", ordenados);
+
+  // Muestra los lugares ordenados
+  for (const place of ordenados) {
+    displayRestaurant(place);
+  }
+});
+
+document.getElementById("btnRating")?.addEventListener("click", () => {
+  if (!places || places.length === 0) {
+    console.warn("No hay lugares cargados aún.");
+    return;
+  }
+
+  // Limpia la lista actual
+  if (restaurantListElement) restaurantListElement.innerHTML = "";
+
+  // Ordena de mayor a menor por rating
+  const ordenadosPorRating = [...places].sort((a, b) => {
+    const ratingA = a.rating || 0;
+    const ratingB = b.rating || 0;
+    return ratingB - ratingA;
+  });
+
+  console.log("Lugares ordenados por calificación:", ordenadosPorRating);
+
+  // Muestra los lugares ordenados
+  for (const place of ordenadosPorRating) {
+    displayRestaurant(place);
+  }
+});
+
 });
